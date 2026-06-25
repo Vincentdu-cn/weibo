@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,8 +9,17 @@ from app.api.ws import router as ws_router
 from app.api.competition import router as competition_router
 from app.api.monitor import router as monitor_router
 from app.api.replay import router as replay_router
+from app.core.database import init_db
 
-app = FastAPI(title="Weibo Hot-Comment Monitor")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Ensure all database tables exist on application startup."""
+    init_db()
+    yield
+
+
+app = FastAPI(title="Weibo Hot-Comment Monitor", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

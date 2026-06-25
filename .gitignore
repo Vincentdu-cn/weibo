@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+
+# 环境变量（敏感信息）
+.env
+.env.local
+
+# opencode 工作目录
+.omo/
+
+# 日志
+*.log
+
+# 系统文件
+.DS_Store
