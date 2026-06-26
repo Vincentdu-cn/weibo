@@ -6,28 +6,37 @@ interface WebSocketMessage {
   timestamp: string;
 }
 
-export interface MemberGridItem {
-  uid: string | null;
-  nickname: string | null;
-  avatar_url: string | null;
-  current_rank: number | null;
-  like_count: number | null;
+export interface MemberComment {
+  comment_id: string;
+  content: string;
+  like_count: number;
+  rank: number;
   is_hot: boolean;
-  comment_count: number;
-  online_status: string;
+  created_at: string;
+}
+
+export interface MemberCard {
+  uid: string;
+  nickname: string;
+  avatar_url: string | null;
+  total_comments: number;
+  total_likes: number;
+  best_rank: number | null;
+  in_hot: boolean;
+  comments: MemberComment[];
 }
 
 interface UseMemberStatusReturn {
-  members: MemberGridItem[];
+  members: MemberCard[];
   isLoading: boolean;
 }
 
 /**
  * Extracts member status data from WebSocket messages.
- * Listens for `member_status_update` — data IS the raw list of MemberGridItem (not wrapped in a dict).
+ * Listens for `member_status_update` — data is the raw list of MemberCard.
  */
 export function useMemberStatus(lastMessage: WebSocketMessage | null): UseMemberStatusReturn {
-  const [members, setMembers] = useState<MemberGridItem[]>([]);
+  const [members, setMembers] = useState<MemberCard[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -36,7 +45,7 @@ export function useMemberStatus(lastMessage: WebSocketMessage | null): UseMember
     if (lastMessage.type === "member_status_update") {
       const raw = lastMessage.data;
       // Backend sends raw list as data — handle both array and object-with-list
-      const list = Array.isArray(raw) ? raw : (raw as unknown as { grid_data?: MemberGridItem[] }).grid_data;
+      const list = Array.isArray(raw) ? raw : (raw as unknown as { grid_data?: MemberCard[] }).grid_data;
       if (Array.isArray(list)) {
         setMembers(list);
         setIsLoading(false);

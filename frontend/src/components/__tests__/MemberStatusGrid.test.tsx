@@ -1,21 +1,44 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import MemberStatusGrid from "../MemberStatusGrid";
-import type { MemberGridItem } from "@/hooks/useMemberStatus";
+import type { MemberCard } from "@/hooks/useMemberStatus";
 
-const mockMembers: MemberGridItem[] = [
-  { uid: "uid1", nickname: "Alice", avatar_url: null, current_rank: 1, like_count: 500, is_hot: true, comment_count: 2, online_status: "online" },
-  { uid: "uid2", nickname: "Bob", avatar_url: null, current_rank: 15, like_count: 50, is_hot: false, comment_count: 1, online_status: "online" },
-  { uid: "uid3", nickname: "Charlie", avatar_url: null, current_rank: null, like_count: null, is_hot: false, comment_count: 0, online_status: "offline" },
-];
-
-// Pad to 20
-const fullMembers: MemberGridItem[] = [
-  ...mockMembers,
-  ...Array.from({ length: 17 }).map(() => ({
-    uid: null, nickname: null, avatar_url: null, current_rank: null,
-    like_count: null, is_hot: false, comment_count: 0, online_status: "unknown",
-  })),
+const mockMembers: MemberCard[] = [
+  {
+    uid: "uid1",
+    nickname: "Alice",
+    avatar_url: null,
+    total_comments: 2,
+    total_likes: 500,
+    best_rank: 1,
+    in_hot: true,
+    comments: [
+      { comment_id: "c1", content: "test", like_count: 300, rank: 1, is_hot: true, created_at: "2024-01-01" },
+      { comment_id: "c2", content: "test2", like_count: 200, rank: 5, is_hot: false, created_at: "2024-01-01" },
+    ],
+  },
+  {
+    uid: "uid2",
+    nickname: "Bob",
+    avatar_url: null,
+    total_comments: 1,
+    total_likes: 50,
+    best_rank: 15,
+    in_hot: false,
+    comments: [
+      { comment_id: "c3", content: "bob comment", like_count: 50, rank: 15, is_hot: false, created_at: "2024-01-01" },
+    ],
+  },
+  {
+    uid: "uid3",
+    nickname: "Charlie",
+    avatar_url: null,
+    total_comments: 0,
+    total_likes: 0,
+    best_rank: null,
+    in_hot: false,
+    comments: [],
+  },
 ];
 
 describe("MemberStatusGrid", () => {
@@ -24,9 +47,9 @@ describe("MemberStatusGrid", () => {
     expect(screen.getByText("暂无组员数据")).toBeInTheDocument();
   });
 
-  it("renders 20 member cards when members provided", () => {
-    render(<MemberStatusGrid members={fullMembers} />);
-    expect(screen.getAllByTestId("member-card")).toHaveLength(20);
+  it("renders member cards when members provided", () => {
+    render(<MemberStatusGrid members={mockMembers} />);
+    expect(screen.getAllByTestId("member-card")).toHaveLength(3);
   });
 
   it("hot member card has border-success class", () => {

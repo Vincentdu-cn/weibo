@@ -161,7 +161,7 @@ async def test_check_login_status_success(mock_get: AsyncMock):
     Three HTTP calls happen on the success path:
       1. qrcode/check  → JSONP with retcode 20000000 + alt
       2. login.php URL  → Set-Cookie headers (extract_cookies)
-      3. profile info   → JSON with user id + screen_name
+      3. weibo.com      → HTML with $CONFIG containing uid + nick
     """
     alt_value = "alt_value_abc123"
 
@@ -171,6 +171,16 @@ async def test_check_login_status_success(mock_get: AsyncMock):
         "status": "waiting",
         "cookie": None,
     }
+
+    homepage_html = (
+        '<html><script>'
+        '$CONFIG = {'
+        '"user":{"id":9876543210,"idstr":"9876543210","screen_name":"test_user"}'
+        '};</script></html>'
+    )
+    home_resp = MagicMock()
+    home_resp.text = homepage_html
+    home_resp.status_code = 200
 
     mock_get.side_effect = [
         # 1. Status check response
@@ -185,10 +195,8 @@ async def test_check_login_status_success(mock_get: AsyncMock):
             "XSRF-TOKEN": "xsrf_token_789",
             "SSOLoginState": "1700000000",
         }),
-        # 3. Profile info response
-        _json_response({
-            "data": {"user": {"id": 9876543210, "screen_name": "test_user"}},
-        }),
+        # 3. weibo.com homepage HTML with $CONFIG
+        home_resp,
     ]
 
     qr = WeiboQrLogin()
@@ -202,11 +210,9 @@ async def test_check_login_status_success(mock_get: AsyncMock):
     assert result["weibo_uid"] == "9876543210"
     assert result["nickname"] == "test_user"
 
-    # Session should be updated
     assert WeiboQrLogin._sessions["test-qrid"]["status"] == "success"
     assert WeiboQrLogin._sessions["test-qrid"]["cookie"] is not None
 
-    # Verify exactly 3 HTTP calls were made
     assert mock_get.call_count == 3
 
 
@@ -234,10 +240,17 @@ async def test_extract_cookies_returns_target_cookies(mock_get: AsyncMock):
 
 @patch.object(httpx.AsyncClient, "get", new_callable=AsyncMock)
 async def test_get_user_info_extracts_uid_and_nickname(mock_get: AsyncMock):
-    """_get_user_info parses /ajax/profile/info response."""
-    mock_get.return_value = _json_response({
-        "data": {"user": {"id": 111222333, "screen_name": "nick_test"}},
-    })
+    """_get_user_info parses $CONFIG from weibo.com homepage HTML."""
+    homepage_html = (
+        '<html><script>'
+        '$CONFIG = {'
+        '"user":{"id":111222333,"idstr":"111222333","screen_name":"nick_test"}'
+        '};</script></html>'
+    )
+    home_resp = MagicMock()
+    home_resp.text = homepage_html
+    home_resp.status_code = 200
+    mock_get.return_value = home_resp
 
     qr = WeiboQrLogin()
     result = await qr._get_user_info("SUB=abc; SUBP=def")

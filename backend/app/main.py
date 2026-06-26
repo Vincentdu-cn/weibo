@@ -9,6 +9,8 @@ from app.api.ws import router as ws_router
 from app.api.competition import router as competition_router
 from app.api.monitor import router as monitor_router
 from app.api.replay import router as replay_router
+from app.api.team_members import router as team_members_router
+from app.api.actions import router as actions_router
 from app.core.database import init_db
 
 
@@ -35,3 +37,5 @@ app.include_router(ws_router)
 app.include_router(competition_router)
 app.include_router(monitor_router)
 app.include_router(replay_router)
+app.include_router(team_members_router)
+app.include_router(actions_router)

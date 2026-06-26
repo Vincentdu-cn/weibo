@@ -40,12 +40,12 @@ describe("DashboardPage", () => {
     expect(screen.getByTestId("member-status-zone")).toBeInTheDocument();
   });
 
-  it("renders alert stream zone", () => {
+  it("renders batch like zone", () => {
     render(
       <BrowserRouter>
         <DashboardPage />
       </BrowserRouter>
     );
-    expect(screen.getByTestId("alert-stream-zone")).toBeInTheDocument();
+    expect(screen.getByTestId("batch-like-zone")).toBeInTheDocument();
   });
 });

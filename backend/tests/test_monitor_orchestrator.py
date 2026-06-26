@@ -2,7 +2,7 @@
 
 Tests cover:
 - MonitorOrchestrator: start_monitoring, stop_monitoring, execute_alert_action, get_stats
-- Monitoring loop: all 14 steps execute in correct order
+- Monitoring loop: all steps execute in correct order
 - API endpoints: POST /api/monitor/start, POST /api/monitor/stop,
   POST /api/alerts/{id}/execute, GET /api/alerts/pending, GET /api/stats
 
@@ -49,6 +49,7 @@ def make_mocks(db_session=None):
     Returns a dict of mocks keyed by parameter name.
     """
     client = MagicMock()
+    client.warmup_cookie = AsyncMock(return_value="mock_cookie")
 
     anti_detection = MagicMock()
 
@@ -58,11 +59,6 @@ def make_mocks(db_session=None):
     analyzer = MagicMock()
 
     tracker = MagicMock()
-
-    alert_engine = MagicMock()
-    alert_engine.process_changes = AsyncMock()
-    alert_engine.resolve_alert = AsyncMock()
-    alert_engine.attach_action = AsyncMock()
 
     action_executor = MagicMock()
     action_executor.batch_like = AsyncMock()
@@ -77,7 +73,6 @@ def make_mocks(db_session=None):
         "fetcher": fetcher,
         "analyzer": analyzer,
         "tracker": tracker,
-        "alert_engine": alert_engine,
         "action_executor": action_executor,
         "ws_manager": ws_manager,
         "db_session": db_session,
@@ -98,11 +93,12 @@ def make_orchestrator(mocks=None, db_session=None) -> tuple[MonitorOrchestrator,
         fetcher=mocks["fetcher"],
         analyzer=mocks["analyzer"],
         tracker=mocks["tracker"],
-        alert_engine=mocks["alert_engine"],
         action_executor=mocks["action_executor"],
         ws_manager=mocks["ws_manager"],
         db_session=mocks["db_session"],
     )
+    # Mock _get_operator_cookie so _run_single_iteration doesn't skip.
+    orch._get_operator_cookie = MagicMock(return_value="mock_cookie=1")
     return orch, mocks
 
 
@@ -112,7 +108,7 @@ def make_orchestrator(mocks=None, db_session=None) -> tuple[MonitorOrchestrator,
 
 class TestConstructor:
     def test_stores_all_dependencies(self):
-        """Constructor stores all 9 parameters as attributes."""
+        """Constructor stores all 8 parameters as attributes."""
         mocks = make_mocks()
         orch = MonitorOrchestrator(
             client=mocks["client"],
@@ -120,7 +116,6 @@ class TestConstructor:
             fetcher=mocks["fetcher"],
             analyzer=mocks["analyzer"],
             tracker=mocks["tracker"],
-            alert_engine=mocks["alert_engine"],
             action_executor=mocks["action_executor"],
             ws_manager=mocks["ws_manager"],
             db_session=mocks["db_session"],
@@ -130,7 +125,6 @@ class TestConstructor:
         assert orch.fetcher is mocks["fetcher"]
         assert orch.analyzer is mocks["analyzer"]
         assert orch.tracker is mocks["tracker"]
-        assert orch.alert_engine is mocks["alert_engine"]
         assert orch.action_executor is mocks["action_executor"]
         assert orch.ws_manager is mocks["ws_manager"]
         assert orch.db_session is mocks["db_session"]
@@ -214,7 +208,7 @@ class TestStartStopMonitoring:
 
 class TestMonitoringLoop:
     async def test_loop_calls_fetcher(self):
-        """Loop calls fetcher.fetch_comments with the weibo_url."""
+        """Loop calls fetcher.fetch_comments with url, cookie, max_pages=10."""
         orch, mocks = make_orchestrator()
         mocks["fetcher"].fetch_comments.return_value = []
         mocks["tracker"].get_team_uids.return_value = []
@@ -225,15 +219,15 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         url = "https://weibo.com/456"
         await orch.start_monitoring(url, interval=0)
-        # Let the loop run one iteration
         await asyncio.sleep(0.01)
         await orch.stop_monitoring()
 
-        mocks["fetcher"].fetch_comments.assert_called_with(url)
+        mocks["fetcher"].fetch_comments.assert_called_with(
+            url, cookie="mock_cookie", max_pages=10, post_author_uid="456",
+        )
 
     async def test_loop_calls_tracker_get_team_uids(self):
         """Loop calls tracker.get_team_uids()."""
@@ -247,7 +241,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -269,7 +262,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -291,7 +283,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -314,7 +305,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -336,7 +326,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -359,7 +348,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -369,25 +357,6 @@ class TestMonitoringLoop:
         first_call = mocks["analyzer"].detect_changes.call_args_list[0]
         assert first_call.args[0] == []
         assert first_call.args[1] == curr_status
-
-    async def test_loop_calls_alert_engine_process_changes(self):
-        """Loop calls alert_engine.process_changes with the changes dict."""
-        orch, mocks = make_orchestrator()
-        changes = {"entered_hot": ["uid_001"], "dropped_out": [], "rank_changed": []}
-        mocks["fetcher"].fetch_comments.return_value = []
-        mocks["tracker"].get_team_uids.return_value = []
-        mocks["analyzer"].analyze.return_value = []
-        mocks["tracker"].track_comments.return_value = {}
-        mocks["tracker"].get_member_grid_data.return_value = []
-        mocks["analyzer"].get_team_hot_status.return_value = []
-        mocks["analyzer"].detect_changes.return_value = changes
-        mocks["alert_engine"].process_changes.return_value = []
-
-        await orch.start_monitoring("https://weibo.com/123", interval=0)
-        await asyncio.sleep(0.01)
-        await orch.stop_monitoring()
-
-        mocks["alert_engine"].process_changes.assert_called_with(changes)
 
     async def test_loop_broadcasts_hot_comments_update(self):
         """Loop broadcasts 'hot_comments_update' via ws_manager."""
@@ -402,7 +371,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -425,7 +393,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -448,7 +415,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -458,13 +424,9 @@ class TestMonitoringLoop:
         stats_calls = [c for c in broadcast_calls if c.args[0] == "stats_update"]
         assert len(stats_calls) >= 1
 
-    async def test_loop_broadcasts_alert_new_for_each_alert(self):
-        """Loop broadcasts 'alert_new' for each alert returned by process_changes."""
+    async def test_loop_does_not_broadcast_alert_new(self):
+        """Loop does NOT broadcast 'alert_new' (alert engine removed)."""
         orch, mocks = make_orchestrator()
-        alert1 = MagicMock(id=1, alert_type="dropped_out", account_uid="uid_001",
-                           message="test1", status="pending")
-        alert2 = MagicMock(id=2, alert_type="entered_hot", account_uid="uid_002",
-                           message="test2", status="pending")
         mocks["fetcher"].fetch_comments.return_value = []
         mocks["tracker"].get_team_uids.return_value = []
         mocks["analyzer"].analyze.return_value = []
@@ -474,15 +436,14 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = [alert1, alert2]
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
         await orch.stop_monitoring()
 
         broadcast_calls = mocks["ws_manager"].broadcast.call_args_list
-        alert_calls = [c for c in broadcast_calls if c.args[0] == "alert_new"]
-        assert len(alert_calls) >= 2
+        types_broadcast = [c.args[0] for c in broadcast_calls]
+        assert "alert_new" not in types_broadcast
 
     async def test_loop_updates_prev_status(self):
         """Loop updates _prev_status to curr_status after each iteration."""
@@ -497,7 +458,6 @@ class TestMonitoringLoop:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -523,7 +483,6 @@ class TestMonitoringLoop:
         mocks["tracker"].get_member_grid_data.return_value = grid_data
         mocks["analyzer"].get_team_hot_status.return_value = curr_status
         mocks["analyzer"].detect_changes.return_value = changes
-        mocks["alert_engine"].process_changes.return_value = []
 
         await orch.start_monitoring("https://weibo.com/123", interval=0)
         await asyncio.sleep(0.01)
@@ -537,224 +496,24 @@ class TestMonitoringLoop:
         mocks["tracker"].get_member_grid_data.assert_called()
         mocks["analyzer"].get_team_hot_status.assert_called()
         mocks["analyzer"].detect_changes.assert_called()
-        mocks["alert_engine"].process_changes.assert_called()
 
 
 # ---------------------------------------------------------------------------
-# execute_alert_action tests
-# ---------------------------------------------------------------------------
-
-class TestExecuteAlertAction:
-    async def test_calls_batch_like(self):
-        """execute_alert_action calls action_executor.batch_like."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = [
-            {"uid": "uid_001", "success": True, "error_msg": None}
-        ]
-        mocks["action_executor"].batch_comment.return_value = []
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        await orch.execute_alert_action(1, "nice comment", [1, 2])
-
-        mocks["action_executor"].batch_like.assert_called_once()
-
-    async def test_calls_batch_comment(self):
-        """execute_alert_action calls action_executor.batch_comment."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = []
-        mocks["action_executor"].batch_comment.return_value = [
-            {"uid": "uid_001", "success": True, "comment_id": "999", "error_msg": None}
-        ]
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        await orch.execute_alert_action(1, "nice comment", [1, 2])
-
-        mocks["action_executor"].batch_comment.assert_called_once()
-
-    async def test_calls_resolve_alert(self):
-        """execute_alert_action calls alert_engine.resolve_alert."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = []
-        mocks["action_executor"].batch_comment.return_value = []
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        await orch.execute_alert_action(1, "nice comment", [1])
-
-        mocks["alert_engine"].resolve_alert.assert_called_once_with(1, "executed")
-
-    async def test_broadcasts_action_result(self):
-        """execute_alert_action broadcasts 'action_result' via ws_manager."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = [
-            {"uid": "uid_001", "success": True, "error_msg": None}
-        ]
-        mocks["action_executor"].batch_comment.return_value = []
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        await orch.execute_alert_action(1, "nice comment", [1])
-
-        broadcast_calls = mocks["ws_manager"].broadcast.call_args_list
-        action_calls = [c for c in broadcast_calls if c.args[0] == "action_result"]
-        assert len(action_calls) == 1
-
-    async def test_returns_result_dict(self):
-        """execute_alert_action returns a result summary dict."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = [
-            {"uid": "uid_001", "success": True, "error_msg": None}
-        ]
-        mocks["action_executor"].batch_comment.return_value = [
-            {"uid": "uid_001", "success": True, "comment_id": "999", "error_msg": None}
-        ]
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        result = await orch.execute_alert_action(1, "nice comment", [1])
-
-        assert isinstance(result, dict)
-        assert "alert_id" in result
-        assert "like_results" in result
-        assert "comment_results" in result
-        assert "resolved" in result
-
-    async def test_returns_result_with_like_and_comment_details(self):
-        """Result dict contains the actual like and comment results."""
-        orch, mocks = make_orchestrator()
-        alert = MagicMock(
-            id=1, comment_id=42, alert_type="dropped_out",
-            account_uid="uid_001", message="test", status="pending",
-        )
-        like_results = [{"uid": "uid_001", "success": True, "error_msg": None}]
-        comment_results = [{"uid": "uid_001", "success": True, "comment_id": "999", "error_msg": None}]
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = like_results
-        mocks["action_executor"].batch_comment.return_value = comment_results
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        result = await orch.execute_alert_action(1, "nice comment", [1])
-
-        assert result["like_results"] == like_results
-        assert result["comment_results"] == comment_results
-        assert result["resolved"] is True
-
-    async def test_with_db_session_gets_cookies_from_accounts(self):
-        """When db_session is available, cookies are fetched from Account table."""
-        from app.models.account import Account
-        from app.models.competition_session import CompetitionSession
-
-        # Create a real in-memory DB session
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-        from app.core.database import Base
-        from app.models import Account as AccountModel, ActionLog, Alert, Comment, CommentSnapshot, CompetitionSession as SessionModel
-
-        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-        Base.metadata.create_all(bind=engine)
-        SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-        db = SessionLocal()
-
-        # Create a CompetitionSession
-        session = SessionModel(
-            target_weibo_url="https://weibo.com/123",
-            target_weibo_mid="5056360400000000",
-            status="running",
-            total_comments=0,
-        )
-        db.add(session)
-        db.commit()
-
-        # Create Accounts with cookies
-        acc1 = AccountModel(
-            weibo_uid="uid_001", nickname="user1",
-            cookie_json="cookie1=data1", status="active",
-        )
-        acc2 = AccountModel(
-            weibo_uid="uid_002", nickname="user2",
-            cookie_json="cookie2=data2", status="active",
-        )
-        db.add_all([acc1, acc2])
-        db.commit()
-
-        # Create an Alert
-        alert = Alert(
-            session_id=session.id, account_uid="uid_001",
-            comment_id=None, alert_type="dropped_out",
-            message="test alert", status="pending",
-        )
-        db.add(alert)
-        db.commit()
-
-        orch, mocks = make_orchestrator(db_session=db)
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = []
-        mocks["action_executor"].batch_comment.return_value = []
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        await orch.execute_alert_action(alert.id, "test comment", [acc1.id, acc2.id])
-
-        # Verify batch_like was called with cookies from DB
-        call_args = mocks["action_executor"].batch_like.call_args
-        cookies = call_args[0][1]  # second positional arg
-        assert len(cookies) == 2
-        uids = [c[0] for c in cookies]
-        assert "uid_001" in uids
-        assert "uid_002" in uids
-
-        db.close()
-        Base.metadata.drop_all(bind=engine)
-
-    async def test_alert_not_found_returns_error(self):
-        """execute_alert_action returns error when alert not found."""
-        orch, mocks = make_orchestrator()
-        mocks["alert_engine"].get_pending_alerts.return_value = []
-
-        result = await orch.execute_alert_action(999, "comment", [1])
-
-        assert result["resolved"] is False
-        assert "error" in result
-
-
-# ---------------------------------------------------------------------------
-# get_stats tests
+# Stats tests
 # ---------------------------------------------------------------------------
 
 class TestGetStats:
     def test_returns_dict_with_required_keys(self):
-        """get_stats returns a dict with all StatsDTO keys."""
+        """get_stats returns a dict with all required keys."""
         orch, mocks = make_orchestrator()
         mocks["tracker"].get_team_uids.return_value = []
-        mocks["alert_engine"].get_pending_alerts.return_value = []
 
         stats = orch.get_stats()
 
         required_keys = {
             "total_comments", "team_hot_count", "remaining_quota",
             "elapsed_time", "hot_ratio", "team_online_count",
-            "pending_alerts", "executed_actions",
+            "executed_actions",
         }
         assert required_keys.issubset(set(stats.keys()))
 
@@ -770,22 +529,10 @@ class TestGetStats:
         stats = orch.get_stats()
         assert stats["remaining_quota"] == 500
 
-    def test_pending_alerts_from_alert_engine(self):
-        """pending_alerts count comes from alert_engine.get_pending_alerts()."""
-        orch, mocks = make_orchestrator()
-        mocks["alert_engine"].get_pending_alerts.return_value = [
-            MagicMock(id=1), MagicMock(id=2), MagicMock(id=3),
-        ]
-        mocks["tracker"].get_team_uids.return_value = []
-
-        stats = orch.get_stats()
-        assert stats["pending_alerts"] == 3
-
     def test_team_online_count_from_tracker(self):
         """team_online_count comes from tracker.get_team_uids()."""
         orch, mocks = make_orchestrator()
         mocks["tracker"].get_team_uids.return_value = ["uid1", "uid2", "uid3"]
-        mocks["alert_engine"].get_pending_alerts.return_value = []
 
         stats = orch.get_stats()
         assert stats["team_online_count"] == 3
@@ -813,7 +560,6 @@ class TestGetStats:
 
         orch, mocks = make_orchestrator(db_session=db)
         mocks["tracker"].get_team_uids.return_value = []
-        mocks["alert_engine"].get_pending_alerts.return_value = []
 
         stats = orch.get_stats()
         assert stats["total_comments"] == 42
@@ -841,7 +587,6 @@ class TestGetStats:
 
         orch, mocks = make_orchestrator(db_session=db)
         mocks["tracker"].get_team_uids.return_value = []
-        mocks["alert_engine"].get_pending_alerts.return_value = []
 
         stats = orch.get_stats()
         assert stats["executed_actions"] == 2
@@ -862,7 +607,6 @@ class TestMonitorAPI:
         from app.api import monitor as monitor_module
 
         orch, mocks = make_orchestrator()
-        # Set the module-level orchestrator
         original = monitor_module._orchestrator
         monitor_module._orchestrator = orch
 
@@ -875,8 +619,6 @@ class TestMonitorAPI:
         mocks["analyzer"].detect_changes.return_value = {
             "entered_hot": [], "dropped_out": [], "rank_changed": []
         }
-        mocks["alert_engine"].process_changes.return_value = []
-        mocks["alert_engine"].get_pending_alerts.return_value = []
 
         with TestClient(app) as client:
             yield client, orch, mocks
@@ -893,9 +635,7 @@ class TestMonitorAPI:
     def test_stop_monitor(self, client_and_orch):
         """POST /api/monitor/stop returns {'status': 'stopped'}."""
         client, orch, mocks = client_and_orch
-        # Start first
         client.post("/api/monitor/start", json={"weibo_url": "https://weibo.com/123"})
-        # Stop
         resp = client.post("/api/monitor/stop")
         assert resp.status_code == 200
         assert resp.json()["status"] == "stopped"
@@ -908,20 +648,6 @@ class TestMonitorAPI:
         })
         assert resp.status_code == 200
 
-    def test_get_pending_alerts(self, client_and_orch):
-        """GET /api/alerts/pending returns list of pending alerts."""
-        client, orch, mocks = client_and_orch
-        alert = MagicMock(
-            id=1, account_uid="uid_001", comment_id=None,
-            alert_type="dropped_out", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-
-        resp = client.get("/api/alerts/pending")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert isinstance(data, list)
-
     def test_get_stats(self, client_and_orch):
         """GET /api/stats returns stats dict."""
         client, orch, mocks = client_and_orch
@@ -930,23 +656,3 @@ class TestMonitorAPI:
         data = resp.json()
         assert "total_comments" in data
         assert "remaining_quota" in data
-        assert "pending_alerts" in data
-
-    def test_execute_alert(self, client_and_orch):
-        """POST /api/alerts/{id}/execute executes the alert action."""
-        client, orch, mocks = client_and_orch
-        alert = MagicMock(
-            id=1, comment_id=42, account_uid="uid_001",
-            alert_type="dropped_out", message="test", status="pending",
-        )
-        mocks["alert_engine"].get_pending_alerts.return_value = [alert]
-        mocks["action_executor"].batch_like.return_value = []
-        mocks["action_executor"].batch_comment.return_value = []
-        mocks["alert_engine"].resolve_alert.return_value = True
-
-        resp = client.post("/api/alerts/1/execute", json={
-            "comment": "nice post", "account_ids": [1, 2]
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "alert_id" in data

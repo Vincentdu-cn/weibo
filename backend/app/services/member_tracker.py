@@ -1,19 +1,20 @@
 """Team member tracker — maps analyzed comments to dashboard-ready member data.
 
 Provides :class:`TeamMemberTracker` which:
-- Loads active team member UIDs from the Account table.
+- Loads team member UIDs from the TeamMember table.
 - Matches pre-analyzed CommentDTO list against team UIDs.
-- Produces per-member tracking data (best-ranked comment, status).
-- Generates a 20-card grid for the dashboard UI.
+- Produces per-member tracking data (all comments, aggregated stats).
+- Generates a member grid for the dashboard UI (one card per member).
 
 Design notes
 ------------
 - Uses the output of :class:`~app.services.hot_analyzer.HotCommentAnalyzer.analyze`
   as input — comments already have ``rank``, ``is_hot``, ``is_team_member`` set.
 - DB session is optional.  Without it, ``get_team_uids`` returns ``[]`` and
-  ``_get_account_info`` returns unknown values.
+  ``_get_member_info`` returns unknown values.
 - ``track_comments`` returns a dict keyed by UID for O(1) lookup.
-- ``get_member_grid_data`` always returns exactly 20 entries (padded or truncated).
+- ``get_member_grid_data`` returns exactly one card per team member (no padding,
+  no truncation).
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ class TeamMemberTracker:
     Parameters
     ----------
     db_session
-        Optional SQLAlchemy session for loading Account table data.
+        Optional SQLAlchemy session for loading TeamMember table data.
         When ``None``, DB-dependent methods return empty/unknown results.
     """
 
@@ -41,25 +42,21 @@ class TeamMemberTracker:
     # ------------------------------------------------------------------
 
     def get_team_uids(self) -> list[str]:
-        """Load all active account ``weibo_uid`` values from the Account table.
+        """Load all ``weibo_uid`` values from the TeamMember table.
 
         Returns
         -------
         list[str]
-            UIDs of accounts with ``status="active"``.  Empty list when no
-            DB session or no active accounts.
+            UIDs of all team members.  Empty list when no DB session or
+            no members exist.
         """
         if self.db_session is None:
             return []
 
-        from app.models.account import Account
+        from app.models.team_member import TeamMember
 
-        accounts = (
-            self.db_session.query(Account)
-            .filter(Account.status == "active")
-            .all()
-        )
-        return [acc.weibo_uid for acc in accounts]
+        members = self.db_session.query(TeamMember).all()
+        return [m.weibo_uid for m in members]
 
     # ------------------------------------------------------------------
     # Comment tracking
@@ -72,8 +69,9 @@ class TeamMemberTracker:
     ) -> dict[str, dict]:
         """Match analyzed comments against team UIDs.
 
-        For each team member, finds their best-ranked comment (lowest rank
-        number) and returns tracking data.
+        For each team member, collects **all** their comments and computes
+        aggregate statistics (total comments, total likes, best rank, hot
+        status).
 
         Parameters
         ----------
@@ -86,54 +84,56 @@ class TeamMemberTracker:
         Returns
         -------
         dict[str, dict]
-            Keyed by UID.  Each value has keys: ``nickname``, ``comment_id``,
-            ``rank``, ``like_count``, ``is_hot``, ``content``, ``status``,
-            ``comment_count``.
-            Members with a comment get ``status="has_comment"``; members
-            without get ``status="no_comment"`` with ``None`` values.
+            Keyed by UID.  Each value has keys: ``nickname``,
+            ``comments``, ``total_comments``, ``total_likes``,
+            ``best_rank``, ``in_hot``.
+            Members with no comments get empty ``comments`` list and
+            zero/None aggregate values.
         """
         team_set = set(team_uids)
 
-        # Group comments by user_uid, tracking best (lowest rank) and count.
-        best_by_uid: dict[str, CommentDTO] = {}
-        count_by_uid: dict[str, int] = {}
-
+        # Group all comments by user_uid.
+        comments_by_uid: dict[str, list[CommentDTO]] = {}
         for comment in comments:
             uid = comment.user_uid
             if uid not in team_set:
                 continue
-
-            count_by_uid[uid] = count_by_uid.get(uid, 0) + 1
-
-            existing = best_by_uid.get(uid)
-            if existing is None or comment.rank < existing.rank:
-                best_by_uid[uid] = comment
+            comments_by_uid.setdefault(uid, []).append(comment)
 
         result: dict[str, dict] = {}
         for uid in team_uids:
-            comment = best_by_uid.get(uid)
-            if comment is not None:
-                result[uid] = {
-                    "nickname": comment.user_name,
-                    "comment_id": comment.weibo_comment_id,
-                    "rank": comment.rank,
-                    "like_count": comment.like_count,
-                    "is_hot": comment.is_hot,
-                    "content": comment.content,
-                    "status": "has_comment",
-                    "comment_count": count_by_uid[uid],
-                }
-            else:
-                result[uid] = {
-                    "nickname": None,
-                    "comment_id": None,
-                    "rank": None,
-                    "like_count": None,
-                    "is_hot": False,
-                    "content": None,
-                    "status": "no_comment",
-                    "comment_count": 0,
-                }
+            member_info = self._get_member_info(uid)
+            member_comments = comments_by_uid.get(uid, [])
+
+            # Build comment DTOs.
+            comment_dicts: list[dict] = []
+            total_likes = 0
+            best_rank: int | None = None
+            in_hot = False
+
+            for c in member_comments:
+                comment_dicts.append({
+                    "comment_id": c.weibo_comment_id,
+                    "content": c.content,
+                    "like_count": c.like_count,
+                    "rank": c.rank,
+                    "is_hot": c.is_hot,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                })
+                total_likes += c.like_count
+                if best_rank is None or c.rank < best_rank:
+                    best_rank = c.rank
+                if c.is_hot:
+                    in_hot = True
+
+            result[uid] = {
+                "nickname": member_info["nickname"],
+                "comments": comment_dicts,
+                "total_comments": len(member_comments),
+                "total_likes": total_likes,
+                "best_rank": best_rank,
+                "in_hot": in_hot,
+            }
 
         return result
 
@@ -146,71 +146,54 @@ class TeamMemberTracker:
         team_uids: list[str],
         tracked: dict[str, dict],
     ) -> list[dict]:
-        """Return 20 member status cards for the dashboard grid.
+        """Return one status card per team member for the dashboard grid.
 
         Each card contains: ``uid``, ``nickname``, ``avatar_url``,
-        ``current_rank``, ``like_count``, ``is_hot``, ``comment_count``,
-        ``online_status``.
+        ``total_comments``, ``total_likes``, ``best_rank``, ``in_hot``,
+        ``comments``.
 
         Parameters
         ----------
         team_uids
-            List of team member UIDs (order preserved, max 20 used).
+            List of team member UIDs (order preserved).
         tracked
             Output of :meth:`track_comments` — per-UID tracking data.
 
         Returns
         -------
         list[dict]
-            Exactly 20 card dicts.  Padded with empty slots if fewer than
-            20 members; truncated if more.
+            Exactly ``len(team_uids)`` card dicts — no padding, no
+            truncation.
         """
         cards: list[dict] = []
 
-        for uid in team_uids[:20]:
+        for uid in team_uids:
             tracked_info = tracked.get(uid, {})
-            account_info = self._get_account_info(uid)
+            member_info = self._get_member_info(uid)
 
-            # Prefer account nickname; fall back to tracked nickname (from comment).
-            nickname = account_info["nickname"] or tracked_info.get("nickname")
-
-            account_status = account_info["status"]
-            online_status = "online" if account_status == "active" else "offline"
+            # Prefer TeamMember nickname; fall back to tracked nickname.
+            nickname = member_info["nickname"] or tracked_info.get("nickname")
 
             card = {
                 "uid": uid,
                 "nickname": nickname,
-                "avatar_url": account_info["avatar_url"],
-                "current_rank": tracked_info.get("rank"),
-                "like_count": tracked_info.get("like_count"),
-                "is_hot": tracked_info.get("is_hot", False),
-                "comment_count": tracked_info.get("comment_count", 0),
-                "online_status": online_status,
+                "avatar_url": member_info["avatar_url"],
+                "total_comments": tracked_info.get("total_comments", 0),
+                "total_likes": tracked_info.get("total_likes", 0),
+                "best_rank": tracked_info.get("best_rank"),
+                "in_hot": tracked_info.get("in_hot", False),
+                "comments": tracked_info.get("comments", []),
             }
             cards.append(card)
-
-        # Pad to 20 entries with empty slots.
-        empty_slot: dict = {
-            "uid": None,
-            "nickname": None,
-            "avatar_url": None,
-            "current_rank": None,
-            "like_count": None,
-            "is_hot": False,
-            "comment_count": 0,
-            "online_status": "offline",
-        }
-        while len(cards) < 20:
-            cards.append(dict(empty_slot))
 
         return cards
 
     # ------------------------------------------------------------------
-    # Account helper
+    # Member helper
     # ------------------------------------------------------------------
 
-    def _get_account_info(self, uid: str) -> dict:
-        """Query the Account table for the given UID.
+    def _get_member_info(self, uid: str) -> dict:
+        """Query the TeamMember table for the given UID.
 
         Parameters
         ----------
@@ -227,18 +210,18 @@ class TeamMemberTracker:
         if self.db_session is None:
             return {"nickname": None, "avatar_url": None, "status": "unknown"}
 
-        from app.models.account import Account
+        from app.models.team_member import TeamMember
 
-        account = (
-            self.db_session.query(Account)
-            .filter(Account.weibo_uid == uid)
+        member = (
+            self.db_session.query(TeamMember)
+            .filter(TeamMember.weibo_uid == uid)
             .first()
         )
-        if account is None:
+        if member is None:
             return {"nickname": None, "avatar_url": None, "status": "unknown"}
 
         return {
-            "nickname": account.nickname,
-            "avatar_url": account.avatar_url,
-            "status": account.status,
+            "nickname": member.nickname,
+            "avatar_url": None,
+            "status": "active",
         }

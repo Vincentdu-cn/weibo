@@ -8,15 +8,15 @@ import {
   TooltipContent,
   TooltipProvider,
 } from "@/components/ui/tooltip";
-import type { MemberGridItem } from "@/hooks/useMemberStatus";
+import type { MemberCard } from "@/hooks/useMemberStatus";
 
 interface MemberStatusGridProps {
-  members: MemberGridItem[];
+  members: MemberCard[];
   isLoading?: boolean;
 }
 
-function StatusDot({ member }: { member: MemberGridItem }) {
-  if (member.is_hot) {
+function StatusDot({ member }: { member: MemberCard }) {
+  if (member.in_hot) {
     return (
       <span
         className="inline-block w-2 h-2 rounded-full bg-success animate-pulse"
@@ -24,7 +24,7 @@ function StatusDot({ member }: { member: MemberGridItem }) {
       />
     );
   }
-  if (member.comment_count > 0) {
+  if (member.total_comments > 0) {
     return (
       <span
         className="inline-block w-2 h-2 rounded-full bg-destructive animate-pulse"
@@ -56,11 +56,11 @@ function MemberStatusGrid({ members, isLoading = false }: MemberStatusGridProps)
         ) : members.length === 0 ? (
           <div className="text-muted-foreground text-center py-8">暂无组员数据</div>
         ) : (
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
             {members.map((member, idx) => {
-              const cardClass = member.is_hot
+              const cardClass = member.in_hot
                 ? "p-2 text-center border-success"
-                : member.comment_count > 0
+                : member.total_comments > 0
                   ? "p-2 text-center border-destructive"
                   : "p-2 text-center";
               return (
@@ -70,28 +70,28 @@ function MemberStatusGrid({ members, isLoading = false }: MemberStatusGridProps)
                       <Card data-testid="member-card" className={cardClass}>
                         <div className="flex flex-col items-center gap-1">
                           <Avatar className="h-8 w-8">
-                            <AvatarImage src={member.avatar_url ?? undefined} alt={member.nickname ?? ""} />
+                            <AvatarImage src={member.avatar_url ?? undefined} alt={member.nickname} />
                             <AvatarFallback className="text-xs">
                               {member.nickname?.charAt(0) ?? "?"}
                             </AvatarFallback>
                           </Avatar>
                           <div className="text-xs truncate w-full text-center">
-                            {member.nickname ?? "未登录"}
+                            {member.nickname || "未登录"}
                           </div>
-                          {member.current_rank !== null ? (
+                          {member.best_rank !== null ? (
                             <Badge
-                              variant={member.is_hot ? "destructive" : "outline"}
+                              variant={member.in_hot ? "destructive" : "outline"}
                               className="text-xs"
                             >
-                              #{member.current_rank}
+                              #{member.best_rank}
                             </Badge>
                           ) : null}
                           <div className="flex items-center gap-1">
                             <span className="font-mono tabular-nums text-xs">
-                              {member.like_count ?? "-"}
+                              {member.total_likes}
                             </span>
                             <span className="text-xs text-muted-foreground">
-                              {member.comment_count}条
+                              {member.total_comments}条
                             </span>
                           </div>
                           <StatusDot member={member} />
@@ -99,7 +99,7 @@ function MemberStatusGrid({ members, isLoading = false }: MemberStatusGridProps)
                       </Card>
                     </TooltipTrigger>
                     <TooltipContent>
-                      UID: {member.uid ?? "N/A"} | 点赞: {member.like_count ?? "N/A"}
+                      UID: {member.uid} | 点赞: {member.total_likes}
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>

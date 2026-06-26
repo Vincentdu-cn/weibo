@@ -158,6 +158,51 @@ class ActionExecutor:
         return results
 
     # ------------------------------------------------------------------
+    # Batch Like Comments (single operator cookie, multiple comments)
+    # ------------------------------------------------------------------
+
+    async def batch_like_comments(
+        self,
+        comment_ids: list[str],
+        cookie: str,
+        uid: str = "operator",
+    ) -> list[LikeResult]:
+        """Like multiple comments sequentially with a single account cookie.
+
+        This is the *single operator* mode: one logged-in account likes ALL
+        team-member comments.  Each like is performed one-at-a-time with an
+        :meth:`AntiDetectionEngine.wait_action` delay (8-20s) **between**
+        consecutive likes.  No delay before the first or after the last.
+
+        Parameters
+        ----------
+        comment_ids
+            List of Weibo comment IDs to like.  Each is converted to ``str``
+            internally.
+        cookie
+            Raw cookie header string for the single operator account.
+        uid
+            Account UID for logging purposes.  Defaults to ``"operator"``.
+
+        Returns
+        -------
+        list[dict]
+            ``[{"success": bool, "error_msg": str | None}]``
+            — exactly one entry per ``comment_id``, in the same order.
+        """
+        results: list[LikeResult] = []
+
+        for i, cid in enumerate(comment_ids):
+            # Delay between likes (not before first, not after last)
+            if i > 0:
+                await self.anti_detection.wait_action()
+
+            result = await self.like_comment(cid, cookie, uid=uid)
+            results.append(result)
+
+        return results
+
+    # ------------------------------------------------------------------
     # Unlike
     # ------------------------------------------------------------------
 

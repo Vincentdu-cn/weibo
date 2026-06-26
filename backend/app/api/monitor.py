@@ -1,15 +1,13 @@
-"""FastAPI routes for monitor control, alert execution, and stats.
+"""FastAPI routes for monitor control and stats.
 
 Endpoints:
-    POST /api/monitor/start           — start the monitoring loop
-    POST /api/monitor/stop            — stop the monitoring loop
-    POST /api/alerts/{alert_id}/execute — execute a semi-automatic alert action
-    GET  /api/alerts/pending          — list pending alerts
-    GET  /api/stats                   — dashboard statistics
+    POST /api/monitor/start   — start the monitoring loop
+    POST /api/monitor/stop    — stop the monitoring loop
+    GET  /api/stats           — dashboard statistics
 
 The orchestrator instance is stored as a module-level singleton
 (``_orchestrator``).  In production, it is lazily initialised with all
-Wave 1-2 service dependencies.  In tests, the singleton can be replaced
+service dependencies.  In tests, the singleton can be replaced
 with a mock instance.
 """
 
@@ -31,7 +29,7 @@ _orchestrator: Optional[MonitorOrchestrator] = None
 def get_orchestrator() -> MonitorOrchestrator:
     """Return the module-level orchestrator singleton.
 
-    Lazily creates a default instance with all Wave 1-2 services when
+    Lazily creates a default instance with all service dependencies when
     called for the first time and no instance has been set.
     """
     global _orchestrator
@@ -47,23 +45,21 @@ def set_orchestrator(orch: MonitorOrchestrator) -> None:
 
 
 def _create_default_orchestrator() -> MonitorOrchestrator:
-    """Create a MonitorOrchestrator with default Wave 1-2 service instances."""
+    """Create a MonitorOrchestrator with default service instances."""
+    from app.core.database import SessionLocal
     from app.services.action_executor import ActionExecutor
-    from app.services.alert_engine import AlertEngine
     from app.services.anti_detection import AntiDetectionEngine
     from app.services.comment_fetcher import CommentFetcher
     from app.services.hot_analyzer import HotCommentAnalyzer
     from app.services.member_tracker import TeamMemberTracker
     from app.services.weibo_client import WeiboHttpClient
-    from app.services.ws_manager import WebSocketConnectionManager
     from app.api.ws import ws_manager
 
     client = WeiboHttpClient()
     anti_detection = AntiDetectionEngine()
     fetcher = CommentFetcher(client, anti_detection)
     analyzer = HotCommentAnalyzer()
-    tracker = TeamMemberTracker()
-    alert_engine = AlertEngine(ws_manager=ws_manager)
+    tracker = TeamMemberTracker(db_session=SessionLocal())
     action_executor = ActionExecutor(client, anti_detection)
 
     return MonitorOrchestrator(
@@ -72,9 +68,9 @@ def _create_default_orchestrator() -> MonitorOrchestrator:
         fetcher=fetcher,
         analyzer=analyzer,
         tracker=tracker,
-        alert_engine=alert_engine,
         action_executor=action_executor,
         ws_manager=ws_manager,
+        db_session=SessionLocal(),
     )
 
 
@@ -87,13 +83,6 @@ class StartMonitorRequest(BaseModel):
 
     weibo_url: str
     interval: int = 15
-
-
-class ExecuteAlertRequest(BaseModel):
-    """Request body for ``POST /api/alerts/{alert_id}/execute``."""
-
-    comment: str
-    account_ids: list[int]
 
 
 # ---------------------------------------------------------------------------
@@ -120,41 +109,6 @@ async def stop_monitor() -> dict:
     orch = get_orchestrator()
     await orch.stop_monitoring()
     return {"status": "stopped"}
-
-
-@router.post("/api/alerts/{alert_id}/execute")
-async def execute_alert(
-    alert_id: int,
-    req: ExecuteAlertRequest,
-) -> dict:
-    """Execute a semi-automatic alert action (like + comment).
-
-    Returns the result summary dict from the orchestrator.
-    """
-    orch = get_orchestrator()
-    return await orch.execute_alert_action(
-        alert_id=alert_id,
-        comment_content=req.comment,
-        selected_account_ids=req.account_ids,
-    )
-
-
-@router.get("/api/alerts/pending")
-async def get_pending_alerts() -> list[dict[str, Any]]:
-    """Return all pending alerts as a list of dicts."""
-    orch = get_orchestrator()
-    alerts = orch.alert_engine.get_pending_alerts()
-    return [
-        {
-            "id": a.id,
-            "account_uid": a.account_uid,
-            "comment_id": a.comment_id,
-            "alert_type": a.alert_type,
-            "message": a.message,
-            "status": a.status,
-        }
-        for a in alerts
-    ]
 
 
 @router.get("/api/stats")

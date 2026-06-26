@@ -31,6 +31,7 @@ def init_db() -> None:
         Comment,
         CommentSnapshot,
         CompetitionSession,
+        TeamMember,
     )
 
     Base.metadata.create_all(bind=engine)

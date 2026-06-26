@@ -6,6 +6,7 @@ from app.models.alert import Alert
 from app.models.comment import Comment
 from app.models.comment_snapshot import CommentSnapshot
 from app.models.competition_session import CompetitionSession
+from app.models.team_member import TeamMember
 
 __all__ = [
     "Account",
@@ -14,4 +15,5 @@ __all__ = [
     "Comment",
     "CommentSnapshot",
     "CompetitionSession",
+    "TeamMember",
 ]

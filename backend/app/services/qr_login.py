@@ -12,6 +12,7 @@ so that tests can patch ``httpx.AsyncClient.get`` once and intercept every call.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -160,7 +161,21 @@ class WeiboQrLogin:
             resp = await redirect_client.get(login_url)
             cookies: dict[str, str] = {}
             for name in self._TARGET_COOKIES:
-                value = redirect_client.cookies.get(name)
+                try:
+                    value = redirect_client.cookies.get(name)
+                except Exception:
+                    jar = redirect_client.cookies.jar
+                    found = None
+                    for c in jar:
+                        if c.name == name and ".weibo.com" in (c.domain or ""):
+                            found = c.value
+                            break
+                    if found is None:
+                        for c in jar:
+                            if c.name == name:
+                                found = c.value
+                                break
+                    value = found
                 if value:
                     cookies[name] = value
             if not cookies:
@@ -178,11 +193,62 @@ class WeiboQrLogin:
     async def _get_user_info(self, cookie: str) -> dict[str, str]:
         """Fetch the logged-in user's UID and nickname.
 
+        Strategy:
+          1. Visit weibo.com homepage, parse ``$CONFIG`` from HTML.
+          2. If nickname is missing, call ``profile/info?uid=…`` as fallback.
+
         Returns:
             ``{"weibo_uid": str, "nickname": str}``
         """
         if not cookie:
             return {"weibo_uid": "", "nickname": ""}
+
+        uid = ""
+        nickname = ""
+
+        # Step 1: parse $CONFIG from weibo.com homepage
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=30.0,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Referer": "https://weibo.com/",
+                "Cookie": cookie,
+            },
+        ) as home_client:
+            resp = await home_client.get("https://weibo.com")
+            if resp.status_code == 200:
+                uid, nickname = self._extract_config(resp.text)
+
+        # Step 2: fallback to profile/info if nickname still missing
+        if uid and not nickname:
+            nickname = await self._fetch_nickname(uid, cookie)
+
+        return {"weibo_uid": uid, "nickname": nickname}
+
+    @staticmethod
+    def _extract_config(html: str) -> tuple[str, str]:
+        """Extract uid and nickname from the ``$CONFIG`` JS object in page HTML."""
+        match = re.search(r'\$CONFIG\s*=\s*(\{.+?\});\s*</script>', html, re.DOTALL)
+        if not match:
+            match = re.search(r'\$CONFIG\s*=\s*(\{.+?\});', html, re.DOTALL)
+        if not match:
+            return "", ""
+        try:
+            config = json.loads(match.group(1))
+        except (json.JSONDecodeError, ValueError):
+            return "", ""
+        user = config.get("user", {})
+        uid = str(user.get("idstr") or user.get("id") or "")
+        nickname = str(user.get("screen_name") or "")
+        return uid, nickname
+
+    async def _fetch_nickname(self, uid: str, cookie: str) -> str:
+        """Fetch nickname from ``profile/info?uid=…`` as a fallback."""
         async with httpx.AsyncClient(
             follow_redirects=True,
             timeout=30.0,
@@ -196,18 +262,17 @@ class WeiboQrLogin:
                 "Cookie": cookie,
             },
         ) as info_client:
-            resp = await info_client.get(self.PROFILE_INFO_URL)
+            resp = await info_client.get(
+                self.PROFILE_INFO_URL, params={"uid": uid}
+            )
             if resp.status_code != 200:
-                return {"weibo_uid": "", "nickname": ""}
+                return ""
             try:
                 data = resp.json()
             except (json.JSONDecodeError, ValueError):
-                return {"weibo_uid": "", "nickname": ""}
+                return ""
             user = data.get("data", {}).get("user", {})
-            return {
-                "weibo_uid": str(user.get("id", "")),
-                "nickname": user.get("screen_name", ""),
-            }
+            return str(user.get("screen_name", ""))
 
     @staticmethod
     def _parse_jsonp(text: str) -> dict[str, Any]:
